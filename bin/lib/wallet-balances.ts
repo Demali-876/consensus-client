@@ -5,6 +5,10 @@ import { base58 } from '@scure/base';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { homedir } from 'node:os';
+import { getEvmRpcUrls } from './network-config.ts';
+
+const BALANCE_QUERY_TIMEOUT_MS = 8_000;
+const EVM_RPC_TIMEOUT_MS = 4_000;
 
 const ERC20_BALANCE_ABI = [{
   name: 'balanceOf', type: 'function', stateMutability: 'view',
@@ -32,7 +36,7 @@ export async function resolveEvmAddress(privateKey: string): Promise<`0x${string
 }
 
 async function getEvmClient(chainId: number) {
-  const { createPublicClient, http } = await import('viem');
+  const { createPublicClient, fallback, http } = await import('viem');
   const chains = await import('viem/chains');
   const map: Record<number, Chain> = {
     1: chains.mainnet,
@@ -42,14 +46,36 @@ async function getEvmClient(chainId: number) {
   };
   const chain = map[chainId];
   if (!chain) throw new Error('unsupported chain');
-  return createPublicClient({ chain, transport: http() });
+  const rpcUrls = getEvmRpcUrls(chainId);
+  if (rpcUrls.length === 0) throw new Error('no RPC configured');
+  return createPublicClient({
+    chain,
+    transport: fallback(
+      rpcUrls.map((url) => http(url, { retryCount: 0, timeout: EVM_RPC_TIMEOUT_MS })),
+      { rank: false },
+    ),
+  });
+}
+
+async function withBalanceTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('balance query timed out')), BALANCE_QUERY_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function resolveEvmEthBalance(address: `0x${string}`, chainId: number): Promise<string> {
   try {
     const { formatEther } = await import('viem');
     const client = await getEvmClient(chainId);
-    const bal = await client.getBalance({ address });
+    const bal = await withBalanceTimeout(client.getBalance({ address }));
     return `${parseFloat(formatEther(bal)).toFixed(6)} ETH`;
   } catch {
     return '—';
@@ -64,12 +90,12 @@ export async function resolveEvmUsdcBalance(
   try {
     const { formatUnits } = await import('viem');
     const client = await getEvmClient(chainId);
-    const bal = await client.readContract({
+    const bal = await withBalanceTimeout(client.readContract({
       address: usdcAddress,
       abi: ERC20_BALANCE_ABI,
       functionName: 'balanceOf',
       args: [address],
-    }) as bigint;
+    }) as Promise<bigint>);
     return `${parseFloat(formatUnits(bal, 6)).toFixed(2)} USDC`;
   } catch {
     return '—';
@@ -88,7 +114,7 @@ export async function resolveSvmAddress(privateKey: string): Promise<string> {
 export async function resolveSvmSolBalance(address: string, rpcUrl: string): Promise<string> {
   try {
     const { createSolanaRpc } = await import('@solana/rpc');
-    const result = await (createSolanaRpc(rpcUrl).getBalance as Function)(address).send();
+    const result = await withBalanceTimeout((createSolanaRpc(rpcUrl).getBalance as Function)(address).send());
     const lamports: bigint =
       result !== null && typeof result === 'object' && 'value' in result
         ? (result as { value: bigint }).value
@@ -104,6 +130,7 @@ export async function resolveSvmUsdcBalance(address: string, rpcUrl: string, usd
     const res = await fetch(rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(BALANCE_QUERY_TIMEOUT_MS),
       body: JSON.stringify({
         jsonrpc: '2.0',
         id: 1,
@@ -144,11 +171,11 @@ export async function resolveIcpCanisterBalance(
       icrc1_symbol(): Promise<string>;
       icrc1_decimals(): Promise<number>;
     };
-    const [balance, symbol, decimals] = await Promise.all([
+    const [balance, symbol, decimals] = await withBalanceTimeout(Promise.all([
       ledger.icrc1_balance_of({ owner: principal, subaccount: [] }),
       ledger.icrc1_symbol(),
       ledger.icrc1_decimals(),
-    ]);
+    ]));
     const sym = (symbol || fallback).trim();
     const dec = Number.isFinite(Number(decimals)) ? Number(decimals) : 8;
     return { symbol: sym, formatted: `${(Number(balance) / 10 ** dec).toFixed(4)}` };

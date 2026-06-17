@@ -38,8 +38,8 @@ export const CHAINS_BY_FAMILY: Record<NetworkFamily, Array<{ label: string; caip
   ],
   icp: [
     { label: 'TESTICP', caip2: 'icp:1:xafvr-biaaa-aaaai-aql5q-cai' },
-    { label: 'ckUSDC',  caip2: 'icp:1:cngnf-vqaaa-aaaar-qag4q-cai' },
-    { label: 'ckETH',   caip2: 'icp:1:xevnm-gaaaa-aaaar-qafnq-cai' },
+    { label: 'ckUSDC',  caip2: 'icp:1:xevnm-gaaaa-aaaar-qafnq-cai' },
+    { label: 'ckETH',   caip2: 'icp:1:ss2fx-dyaaa-aaaar-qacoq-cai' },
   ],
 };
 

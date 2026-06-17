@@ -37,13 +37,15 @@ export type PrefField = {
 };
 
 function networkPrefToOption(caip2: string | undefined): string {
-  return caip2?.startsWith('solana:') ? 'Solana' : 'Base';
+  if (caip2?.startsWith('solana:')) return 'Solana';
+  if (caip2?.startsWith('icp:')) return 'ICP';
+  return 'Base';
 }
 
 function networkOptionToPref(option: string): string {
-  return option === 'Solana'
-    ? 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
-    : 'eip155:8453';
+  if (option === 'Solana') return 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+  if (option === 'ICP') return 'icp:1:xafvr-biaaa-aaaai-aql5q-cai';
+  return 'eip155:8453';
 }
 
 function makeInputField(
@@ -172,7 +174,7 @@ export function makePrefsPane(renderer: CliRenderer, fields: PrefField[]): { pan
   byId.defaultVerbose.refs = makeToggleField(renderer, pair.right, 'Verbose', byId.defaultVerbose);
   pair = makePrefPair(renderer, panel, leftWidth, rightWidth);
   byId.defaultRegion.refs = makeInputField(renderer, pair.left, 'Region', byId.defaultRegion, { width: 22, suffix: 'blank = auto' });
-  byId.defaultNetwork.refs = makeToggleField(renderer, pair.right, 'Network', byId.defaultNetwork, { suffix: 'USDC' });
+  byId.defaultNetwork.refs = makeToggleField(renderer, pair.right, 'Network', byId.defaultNetwork);
   pair = makePrefPair(renderer, panel, leftWidth, rightWidth);
   byId.defaultExcludeNode.refs = makeInputField(renderer, pair.left, 'Exclude node', byId.defaultExcludeNode, { width: 34 });
 
@@ -209,7 +211,7 @@ export function prefFieldsFromPrefs(prefs: Preferences): PrefField[] {
     { id: 'defaultBudget', value: prefs.defaultBudget != null ? String(prefs.defaultBudget) : '5.00', kind: 'text', label: 'Spend limit', hint: 'Spend limit · USD cap per paid proxy session', section: 'proxy' },
     { id: 'defaultVerbose', value: prefs.defaultVerbose ? 'on' : 'off', kind: 'toggle', options: ['off', 'on'], label: 'Verbose', hint: 'Verbose · add Consensus metadata headers by default', section: 'proxy' },
     { id: 'defaultRegion', value: prefs.defaultRegion ?? 'us-west-1', kind: 'text', label: 'Region', hint: 'Region · blank means automatic node selection', section: 'proxy' },
-    { id: 'defaultNetwork', value: networkPrefToOption(prefs.defaultNetwork), kind: 'toggle', options: ['Base', 'Solana'], label: 'Network', hint: 'Network · default payment network family for USDC', section: 'proxy' },
+    { id: 'defaultNetwork', value: networkPrefToOption(prefs.defaultNetwork), kind: 'toggle', options: ['Base', 'Solana', 'ICP'], label: 'Network', hint: 'Network · default payment network family', section: 'proxy' },
     { id: 'defaultExcludeNode', value: prefs.defaultExcludeNode ?? '', kind: 'text', label: 'Exclude node', hint: 'Exclude node · node domain to skip by default', section: 'proxy' },
     { id: 'defaultProtocol', value: prefs.defaultProtocol, kind: 'toggle', options: ['http', 'tcp'], label: 'Tunnel proto', hint: 'Tunnel proto · default tunnel protocol', section: 'tunnel' },
     { id: 'defaultTarget', value: prefs.defaultTarget ?? 'localhost', kind: 'text', label: 'Tunnel target', hint: 'Tunnel target · pre-fill target field in new tunnels', section: 'tunnel' },

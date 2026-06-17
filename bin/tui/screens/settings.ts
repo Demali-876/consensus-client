@@ -29,26 +29,7 @@ import {
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { homedir } from 'node:os';
-
-const EVM_NETWORKS = [
-  { key: 'ethereum', label: 'Ethereum', chainId: 1,        usdc: null },
-  { key: 'base',     label: 'Base',     chainId: 8453,     usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}` },
-  { key: 'baseSep',  label: 'Base Sep', chainId: 84532,    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as `0x${string}` },
-  { key: 'ethSep',   label: 'Eth Sep',  chainId: 11155111, usdc: null },
-] as const;
-
-const SVM_NETWORKS = [
-  { key: 'mainnet', label: 'Mainnet', rpc: 'https://api.mainnet-beta.solana.com', usdc: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
-  { key: 'devnet',  label: 'Devnet',  rpc: 'https://api.devnet.solana.com',       usdc: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU' },
-] as const;
-
-const ICP_CANISTERS = [
-  { id: 'ryjl3-tyaaa-aaaaa-aaaba-cai', symbol: 'ICP' },
-  { id: 'xevnm-gaaaa-aaaar-qafnq-cai', symbol: 'ckETH' },
-  { id: 'cngnf-vqaaa-aaaar-qag4q-cai', symbol: 'ckUSDC' },
-  { id: '3jkp5-oyaaa-aaaaj-azwqa-cai', symbol: 'ckUSDT' },
-  { id: 'xafvr-biaaa-aaaai-aql5q-cai', symbol: 'TESTICP' },
-] as const;
+import { EVM_NETWORKS, ICP_CANISTERS, SVM_NETWORKS } from '../../lib/network-config.ts';
 
 type Tab = 'wallet' | 'prefs';
 
@@ -551,6 +532,10 @@ async function refreshWallet(refs: WalletRefs, live: () => boolean): Promise<voi
     if (value.includes('USDC')) spendable += parseAmount(value);
     refs.spendable.content = `$${spendable.toFixed(2)}`;
   };
+  const addSpendable = (value: string): void => {
+    spendable += parseAmount(value);
+    refs.spendable.content = `$${spendable.toFixed(2)}`;
+  };
 
   refs.evmAddr.content = evmKey ? 'resolving…' : shortMiddle(cfg.addresses?.evm, 8, 4);
   refs.svmAddr.content = svmKey ? 'resolving…' : shortMiddle(cfg.addresses?.solana, 8, 4);
@@ -568,11 +553,7 @@ async function refreshWallet(refs: WalletRefs, live: () => boolean): Promise<voi
     if (addr !== '(invalid key)') {
       for (const n of EVM_NETWORKS) {
         void resolveEvmEthBalance(addr, n.chainId).then((value) => setBal(refs.evmNative[n.key]!, value));
-        if (n.usdc) {
-          void resolveEvmUsdcBalance(addr, n.chainId, n.usdc).then((value) => setMoney(refs.evmUsdc[n.key]!, value));
-        } else {
-          setVal(refs.evmUsdc[n.key]!, '—', C.dim);
-        }
+        void resolveEvmUsdcBalance(addr, n.chainId, n.usdc).then((value) => setMoney(refs.evmUsdc[n.key]!, value));
       }
     }
   } else {
@@ -613,6 +594,7 @@ async function refreshWallet(refs: WalletRefs, live: () => boolean): Promise<voi
           void resolveIcpCanisterBalance(Actor, agent, owner, item.id, item.symbol).then(({ symbol, formatted }) => {
             const ref = refs.icpBalances[symbol] ?? refs.icpBalances[item.symbol];
             if (ref) setVal(ref, formatted, formatted === '—' ? C.dim : C.emerald);
+            if (symbol === 'ckUSDC' && formatted !== '—') addSpendable(formatted);
           });
         }
       } catch {
