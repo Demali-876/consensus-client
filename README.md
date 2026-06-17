@@ -16,6 +16,10 @@
   <a href="#"><img alt="Status" src="https://img.shields.io/badge/status-beta-orange"/></a>
 </p>
 
+<p align="center">
+  Part of the <a href="https://github.com/Demali-876/consensus">Consensus Protocol</a> · see also <a href="https://github.com/Demali-876/consensus-node">consensus-node</a>
+</p>
+
 ---
 
 - [Installation](#installation)
@@ -38,6 +42,8 @@
 - [Security](#security)
 
 ---
+
+> **Architecture note (in progress):** the client is being updated for the control-plane / data-plane split — instead of the orchestrator relaying every request, the client asks the server to select a node, then connects **directly to that node** with a short-lived signed ticket. The public APIs documented below are intended to stay stable across the migration.
 
 ## Installation
 
