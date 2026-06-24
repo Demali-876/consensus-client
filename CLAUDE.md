@@ -8,7 +8,7 @@ This is **`consensus-client`** — `@canister-software/consensus-cli`, the TypeS
 
 ## Commands
 
-Requires **Bun ≥ 1.3** (`bin/consensus` shebang is `#!/usr/bin/env bun`). The published library form (`dist/index.js`, `dist/index.cjs`) targets Node ≥ 18.
+Requires **Bun ≥ 1.3** (`bin/consensus` shebang is `#!/usr/bin/env bun`). The published library form (`dist/index.js`, `dist/index.cjs`) targets Node ≥ 20.19 (the floor for `@noble/ciphers` 2.x, used by the data-plane `secure-channel`).
 
 ```bash
 bun install
