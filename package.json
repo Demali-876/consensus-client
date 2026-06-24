@@ -39,6 +39,7 @@
   "dependencies": {
     "@canister-software/x402-icp": "^0.1.1",
     "@coinbase/cdp-sdk": "^1.25.0",
+    "@noble/ciphers": "^2.2.0",
     "@opentui/core": "^0.1.90",
     "@scure/base": "^2.0.0",
     "@solana/signers": "^5.3.0",
