@@ -47,6 +47,8 @@ const nodeServes = (body: unknown): ProxyResponsePayload => ({
   body_encoding: 'base64',
 });
 
+const nodeServesConnector = (body: unknown): NodeConnector => async () => nodeServes(body);
+
 describe('direct-request forwarding helpers', () => {
   test('forwardHeaders strips consensus control headers, keeps upstream ones', () => {
     const out = forwardHeaders({
@@ -167,6 +169,60 @@ describe('ProxyClient direct routing', () => {
     expect(connectorCalled).toBe(false);
     expect(orch.payloads[0].headers['x-direct']).toBeUndefined();
     expect(res.data).toEqual({ relayed: true });
+  });
+});
+
+describe('ProxyClient direct routing — binary fidelity', () => {
+  // Bytes that are NOT valid UTF-8 (PNG magic + 0xff/0xfe/0x00), so a string
+  // round-trip would corrupt them. Direct is default-on, so this must survive.
+  const RAW = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x00, 0x01, 0x42, 0xc3, 0x28]);
+
+  const binaryConnector = (contentType?: string): NodeConnector => async () => {
+    const headers: Record<string, string> = contentType ? { 'content-type': contentType } : {};
+    return {
+      type: 'proxy_response',
+      status: 200,
+      status_text: 'OK',
+      headers,
+      body: RAW.toString('base64'),
+      body_encoding: 'base64',
+    };
+  };
+
+  test('fetch() path returns the exact bytes for a binary response', async () => {
+    const orch = orchestrator();
+    const client = ProxyClient(orch.fetch as never, { connectToNode: binaryConnector('image/png') });
+    const res = await client.fetch('https://api.example.com/image.png');
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.equals(RAW)).toBe(true);
+    expect(res.headers.get('content-type')).toBe('image/png');
+  });
+
+  test('request() path exposes binary as a Buffer of the exact bytes', async () => {
+    const orch = orchestrator();
+    const client = ProxyClient(orch.fetch as never, { connectToNode: binaryConnector('application/pdf') });
+    const res = await client.request({ target_url: 'https://api.example.com/doc.pdf', method: 'GET', headers: {} });
+    expect(ArrayBuffer.isView(res.data)).toBe(true);
+    expect(Buffer.from(res.data as Uint8Array).equals(RAW)).toBe(true);
+  });
+
+  test('unknown/absent content-type is preserved as bytes (no lossy decode)', async () => {
+    const orch = orchestrator();
+    const client = ProxyClient(orch.fetch as never, { connectToNode: binaryConnector(undefined) });
+    const res = await client.request({ target_url: 'https://api.example.com/blob', method: 'GET', headers: {} });
+    expect(Buffer.from(res.data as Uint8Array).equals(RAW)).toBe(true);
+  });
+
+  test('textual JSON still parses on both fetch() and request()', async () => {
+    const orch = orchestrator();
+    const client = ProxyClient(orch.fetch as never, { connectToNode: nodeServesConnector({ hi: 'node' }) });
+    const viaRequest = await client.request({ target_url: 'https://api.example.com/v1', method: 'GET', headers: {} });
+    expect(viaRequest.data).toEqual({ hi: 'node' });
+
+    const orch2 = orchestrator();
+    const client2 = ProxyClient(orch2.fetch as never, { connectToNode: nodeServesConnector({ hi: 'node' }) });
+    const viaFetch = await client2.fetch('https://api.example.com/v1');
+    expect(await viaFetch.json()).toEqual({ hi: 'node' });
   });
 });
 

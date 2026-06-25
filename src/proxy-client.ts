@@ -241,18 +241,25 @@ function toProxyResult(response: Response, data: unknown): ProxyResponseShape {
   };
 }
 
+function isBytes(value: unknown): value is Uint8Array | ArrayBuffer | DataView {
+  return ArrayBuffer.isView(value) || value instanceof ArrayBuffer;
+}
+
 function toFetchResponse(proxyResult: ProxyResponseShape, requestUrl: string): Response {
   const headers = new Headers(proxyResult.headers || {});
   const payload = proxyResult.data;
-  const body =
-    payload === null || typeof payload === 'undefined'
-      ? null
-      : typeof payload === 'string'
-        ? payload
-        : JSON.stringify(payload);
-
-  if (payload !== null && typeof payload === 'object' && !headers.has('content-type')) {
-    headers.set('content-type', 'application/json');
+  let body: BodyInit | null;
+  if (payload === null || typeof payload === 'undefined') {
+    body = null;
+  } else if (typeof payload === 'string') {
+    body = payload;
+  } else if (isBytes(payload)) {
+    // Raw bytes (a binary direct-node response) pass through unchanged — never via
+    // a string, which would corrupt non-UTF-8 bodies (images, PDFs, gzip, …).
+    body = payload as unknown as BodyInit;
+  } else {
+    body = JSON.stringify(payload);
+    if (!headers.has('content-type')) headers.set('content-type', 'application/json');
   }
 
   const response = new Response(body, {
@@ -316,6 +323,30 @@ function nodeErrorStatus(code: string): number {
   }
 }
 
+// Content-types we can safely round-trip through a string. Anything else — or an
+// absent/unknown content-type — is treated as binary and kept as raw bytes, so a
+// lossy UTF-8 decode never corrupts it.
+function isTextualResponse(headers: Record<string, string>): boolean {
+  let contentType = '';
+  for (const key in headers) {
+    if (key.toLowerCase() === 'content-type') {
+      contentType = String(headers[key]).toLowerCase();
+      break;
+    }
+  }
+  if (!contentType) return false;
+  return (
+    contentType.startsWith('text/') ||
+    contentType.includes('application/json') ||
+    contentType.includes('+json') ||
+    contentType.includes('application/xml') ||
+    contentType.includes('+xml') ||
+    contentType.includes('application/javascript') ||
+    contentType.includes('application/x-www-form-urlencoded') ||
+    contentType.includes('application/graphql')
+  );
+}
+
 function mapNodeResponse(payload: ProxyResponsePayload, serverMeta: unknown): ProxyResponseShape {
   if (payload.type === 'error') {
     const error = new ProxyClientError(`Node returned ${payload.code}: ${payload.message}`);
@@ -323,12 +354,17 @@ function mapNodeResponse(payload: ProxyResponsePayload, serverMeta: unknown): Pr
     error.data = { code: payload.code, message: payload.message };
     throw error;
   }
-  const text = Buffer.from(payload.body, 'base64').toString('utf8');
+  // ProxyResponsePayload.body is base64. Decode to bytes once; only stringify-parse
+  // when the content-type is textual, otherwise keep the raw Buffer so binary
+  // responses survive intact through toFetchResponse (a string round-trip would
+  // irreversibly corrupt them).
+  const bytes = Buffer.from(payload.body, 'base64');
+  const headers = payload.headers ?? {};
   return {
     status: payload.status,
     statusText: payload.status_text,
-    headers: payload.headers ?? {},
-    data: parseMaybeJson(text),
+    headers,
+    data: isTextualResponse(headers) ? parseMaybeJson(bytes.toString('utf8')) : bytes,
     meta:
       serverMeta && typeof serverMeta === 'object'
         ? (serverMeta as ProxyResponseShape['meta'])
