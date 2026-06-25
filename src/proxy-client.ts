@@ -1,6 +1,9 @@
 
 import { AsyncLocalStorage } from 'async_hooks';
-import { ProxyClientOptions, ProxyMode, ProxyPayload, ProxyResponseShape, ProxyClientMiddleware, ProxyStrategy, ProxyBudgetSnapshot, ProxyClientError, MiddlewareReq, Next} from './types'
+import { ProxyClientOptions, ProxyMode, ProxyPayload, ProxyResponseShape, ProxyClientMiddleware, ProxyStrategy, ProxyBudgetSnapshot, ProxyClientError, MiddlewareReq, Next, NodeConnector} from './types'
+import { connectToNode, type NodeRoute } from './node-connect.js';
+import { forwardHeaders, canonicalNodeBody } from './direct-request.js';
+import type { ProxyResponsePayload } from './dataplane/tunnel/data-plane.js';
 const DEFAULT_SERVER_URL =
   process.env.CONSENSUS_SERVER_URL || 'https://consensus.canister.software';
 const USD_SCALE = 1_000_000;
@@ -287,6 +290,52 @@ function isLikelyPaidProxyResponse(proxyResult: ProxyResponseShape): boolean {
   return true;
 }
 
+function isDirectRoute(parsed: unknown): parsed is { route: NodeRoute; meta?: unknown } {
+  if (!parsed || typeof parsed !== 'object' || !('route' in parsed)) return false;
+  const route = (parsed as { route: unknown }).route;
+  return (
+    !!route &&
+    typeof route === 'object' &&
+    typeof (route as NodeRoute).node_id === 'string' &&
+    typeof (route as NodeRoute).domain === 'string' &&
+    typeof (route as NodeRoute).node_pubkey_pem === 'string' &&
+    typeof (route as NodeRoute).ticket === 'string'
+  );
+}
+
+function nodeErrorStatus(code: string): number {
+  switch (code) {
+    case 'bad_request':
+      return 400;
+    case 'unauthorized':
+      return 401;
+    case 'upstream_error':
+      return 502;
+    default:
+      return 502;
+  }
+}
+
+function mapNodeResponse(payload: ProxyResponsePayload, serverMeta: unknown): ProxyResponseShape {
+  if (payload.type === 'error') {
+    const error = new ProxyClientError(`Node returned ${payload.code}: ${payload.message}`);
+    error.status = nodeErrorStatus(payload.code);
+    error.data = { code: payload.code, message: payload.message };
+    throw error;
+  }
+  const text = Buffer.from(payload.body, 'base64').toString('utf8');
+  return {
+    status: payload.status,
+    statusText: payload.status_text,
+    headers: payload.headers ?? {},
+    data: parseMaybeJson(text),
+    meta:
+      serverMeta && typeof serverMeta === 'object'
+        ? (serverMeta as ProxyResponseShape['meta'])
+        : { direct: true },
+  };
+}
+
 function ensureInterceptorInstalled(): void {
   if (interceptorInstalled) return;
 
@@ -325,6 +374,12 @@ export function ProxyClient(
   const strategy: ProxyStrategy = options.strategy === 'manual' ? 'manual' : 'auto';
   const serverUrl = trimTrailingSlash(DEFAULT_SERVER_URL);
   const proxyEndpoint = `${serverUrl}/proxy`;
+  // Direct node routing is on by default; `direct: false` (per client or per
+  // request) forces the relayed path. The connector is injectable for testing.
+  const directEnabled = options.direct !== false;
+  const connector: NodeConnector = options.connectToNode ?? connectToNode;
+  const resolveDirect = (opts: Partial<ProxyClientOptions>): boolean =>
+    typeof opts.direct === 'boolean' ? opts.direct : directEnabled;
   const baseControlHeaders = controlHeadersFromOptions(options);
   const limitMicros = parseUsdToMicros(options.limit_usd, 'limit_usd');
   const requestCostMicros =
@@ -386,15 +441,27 @@ export function ProxyClient(
     return directFetch(input, init);
   }
 
-  async function requestProxy(payload: ProxyPayload): Promise<ProxyResponseShape> {
+  async function requestProxy(payload: ProxyPayload, direct: boolean): Promise<ProxyResponseShape> {
+    // x-direct travels in the proxy payload headers (the server reads req.body.headers).
+    // Tunnel targets cannot go direct, so never request it for them.
+    const canDirect = direct && !!payload.target_url && payload.target_ref?.kind !== 'tunnel';
+    const outboundHeaders = canDirect ? { ...payload.headers, 'x-direct': 'true' } : payload.headers;
+
     const response = await fetchWithPayment(proxyEndpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, headers: outboundHeaders }),
     });
 
     const raw = await response.text();
     const parsed = parseMaybeJson(raw);
+
+    // Direct path: the orchestrator selected a node and returned a signed ticket;
+    // connect to the node and serve there. A mode:'self' fallthrough returns a
+    // normal inline response (no `route`) and is handled below as before.
+    if (canDirect && isDirectRoute(parsed)) {
+      return runDirect(parsed.route, parsed.meta, payload);
+    }
 
     if (!response.ok && !(parsed && typeof parsed === 'object' && 'status' in parsed)) {
       const message =
@@ -408,6 +475,32 @@ export function ProxyClient(
     }
 
     return toProxyResult(response, parsed);
+  }
+
+  async function runDirect(
+    route: NodeRoute,
+    serverMeta: unknown,
+    payload: ProxyPayload
+  ): Promise<ProxyResponseShape> {
+    let nodeResponse: ProxyResponsePayload;
+    try {
+      nodeResponse = await connector(route, {
+        target_url: payload.target_url!,
+        method: String(payload.method || 'GET').toUpperCase(),
+        // Strip consensus control headers (incl. x-api-key) so they don't leak to
+        // the upstream, and canonicalize the body so the node recomputes the same
+        // dedupe key the ticket is bound to.
+        headers: forwardHeaders(payload.headers),
+        body: canonicalNodeBody(payload.body),
+      });
+    } catch (err) {
+      const error = new ProxyClientError(
+        `Direct routing to node ${route.node_id} failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+      error.data = { node_id: route.node_id, direct: true };
+      throw error;
+    }
+    return mapNodeResponse(nodeResponse, serverMeta);
   }
 
   async function requestDirectFromPayload(
@@ -458,7 +551,7 @@ export function ProxyClient(
       ...controlHeadersFromOptions(perRequestOptions),
     };
     const payload = await buildProxyPayload(input, init, controlHeaders);
-    const proxyResult = await requestProxy(payload);
+    const proxyResult = await requestProxy(payload, resolveDirect(perRequestOptions));
     incrementSpend(proxyResult);
 
     const requestUrl =
@@ -480,12 +573,15 @@ export function ProxyClient(
       ...normalizeHeaders(payload.headers),
     };
 
-    const proxyResult = await requestProxy({
-      ...(payload.target_ref ? { target_ref: payload.target_ref } : { target_url: String(payload.target_url || '') }),
-      method: String(payload.method || 'GET').toUpperCase(),
-      headers: controlHeaders,
-      ...(typeof payload.body !== 'undefined' ? { body: payload.body } : {}),
-    });
+    const proxyResult = await requestProxy(
+      {
+        ...(payload.target_ref ? { target_ref: payload.target_ref } : { target_url: String(payload.target_url || '') }),
+        method: String(payload.method || 'GET').toUpperCase(),
+        headers: controlHeaders,
+        ...(typeof payload.body !== 'undefined' ? { body: payload.body } : {}),
+      },
+      resolveDirect(perRequestOptions)
+    );
 
     incrementSpend(proxyResult);
     return proxyResult;

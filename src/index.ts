@@ -1,6 +1,10 @@
 export { ProxyClient }                                from './proxy-client.js';
 export { SocketClient }                               from './socket-client.js';
 
+// ─── Direct data plane (node connector) ───────────────────────────────────────
+export { connectToNode, nodeConnectUrl }              from './node-connect.js';
+export type { NodeRoute, DirectRequest, ConnectToNodeOptions } from './node-connect.js';
+
 // ─── Wallet & payment ─────────────────────────────────────────────────────────
 export { resolveSigners }                             from './wallet.js';
 export type { ResolvedSigners }                       from './wallet.js';
