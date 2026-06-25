@@ -1,3 +1,6 @@
+import type { NodeRoute, DirectRequest } from './node-connect';
+import type { ProxyResponsePayload } from './dataplane/tunnel/data-plane';
+
 export type ConsensusSocketModel = 'hybrid' | 'time' | 'data';
 
 export type ConsensusSocketTokenAuth = {
@@ -223,7 +226,23 @@ export type ProxyClientOptions = {
   limit_usd?: number;
   /** Callback fired once when budget is exhausted and stand-down is activated. */
   on_limit_reached?: (budget: ProxyBudgetSnapshot) => void;
+  /**
+   * Direct node routing (control/data-plane split). When enabled (default), proxy
+   * requests send `x-direct`; if the orchestrator selects a node it returns a signed
+   * routing ticket and the client connects directly to that node, otherwise the
+   * orchestrator serves the request inline (server-as-node fallback). Set `false`
+   * to force the relayed path. Can be overridden per request.
+   */
+  direct?: boolean;
+  /**
+   * Advanced/testing: override the connector used to reach a node on the direct
+   * path. Defaults to the built-in WebSocket connector (`connectToNode`).
+   */
+  connectToNode?: NodeConnector;
 };
+
+/** Reaches the selected node on the direct path and returns its response. */
+export type NodeConnector = (route: NodeRoute, request: DirectRequest) => Promise<ProxyResponsePayload>;
 
 export type ProxyPayload = {
   target_url?: string;
