@@ -180,4 +180,49 @@ describe('node-connect — direct data-plane over a real WebSocket', () => {
       connectToNode(wrong, { target_url: 'https://api.example.com/v1' }, { connectUrl: open.url })
     ).rejects.toThrow(/signature|channel_binding/);
   });
+
+  test('dials the orchestrator-advertised connect_url, not the reconstructed domain', async () => {
+    const NODE_ID = 'node-connect-url';
+    const served: ProxyResponsePayload = {
+      type: 'proxy_response',
+      status: 200,
+      status_text: 'OK',
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ ok: true })).toString('base64'),
+      body_encoding: 'base64',
+    };
+    open = await startFakeNode(NODE_ID, served);
+
+    // `domain` would reconstruct to an unreachable wss URL; `connect_url` points at
+    // the (local ws) fake node. No connectUrl override — so completing the request
+    // proves connect_url is preferred over reconstructing from domain.
+    const route = routeFor(open, NODE_ID);
+    route.domain = 'unreachable.invalid';
+    route.connect_url = open.url;
+
+    const response = await connectToNode(route, { target_url: 'https://api.example.com/v1' });
+    expect(response.type).toBe('proxy_response');
+  });
+
+  test('options.connectUrl still overrides route.connect_url', async () => {
+    const NODE_ID = 'node-override';
+    const served: ProxyResponsePayload = {
+      type: 'proxy_response',
+      status: 200,
+      status_text: 'OK',
+      headers: {},
+      body: '',
+      body_encoding: 'base64',
+    };
+    open = await startFakeNode(NODE_ID, served);
+
+    const route = routeFor(open, NODE_ID);
+    route.connect_url = 'wss://unreachable.invalid/connect'; // must be ignored in favor of the override
+    const response = await connectToNode(
+      route,
+      { target_url: 'https://api.example.com/v1' },
+      { connectUrl: open.url }
+    );
+    expect(response.type).toBe('proxy_response');
+  });
 });
