@@ -19,6 +19,11 @@ import {
 export interface NodeRoute {
   node_id: string;
   domain: string;
+  /** The node's advertised data-plane URL (`wss://<node>/connect`). Preferred over
+   *  reconstructing from `domain` — it carries whatever the orchestrator gateway
+   *  actually routes. Optional so a client still works against an older server that
+   *  does not return it. */
+  connect_url?: string;
   node_pubkey_pem: string;
   ticket: string;
   ticket_exp?: number;
@@ -69,7 +74,9 @@ export async function connectToNode(
   request: DirectRequest,
   options: ConnectToNodeOptions = {}
 ): Promise<ProxyResponsePayload> {
-  const url = options.connectUrl ?? nodeConnectUrl(route.domain);
+  // Prefer an explicit test override, then the orchestrator-advertised connect_url,
+  // then reconstruct from the domain (older servers that don't return connect_url).
+  const url = options.connectUrl ?? route.connect_url ?? nodeConnectUrl(route.domain);
   const WebSocketImpl = options.WebSocketImpl ?? (await resolveWebSocket());
   const socket = new WebSocketImpl(url);
   // Prefer ArrayBuffer over Blob for binary frames on EventTarget-style sockets;
