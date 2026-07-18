@@ -7,6 +7,7 @@ import WebSocket from 'ws';
 import { ProxyClient }                          from './proxy-client.js';
 import { createPaymentFetch, type PreferNetwork } from './payment-fetch.js';
 import type { ResolvedSigners as ResolvedWallet }  from './wallet.js';
+import type { ProxyProfile }                       from './types.js';
 
 type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 const CONSENSUS_SERVER_URL = (process.env.CONSENSUS_SERVER_URL || 'https://consensus.canister.software').replace(/\/+$/, '');
@@ -473,6 +474,10 @@ export type ForwardWorkerOptions = {
   budget?:      number;
   /** Cache TTL in seconds forwarded to the consensus node. */
   cacheTtl?:    number;
+  /** Local named forward-proxy profiles; definitions never leave this process. */
+  profiles?:    Record<string, ProxyProfile>;
+  /** Default local profile used by the worker. */
+  profile?:     string;
   /** Route filtering mode — passed to ProxyClient. */
   mode?:           'inclusive' | 'exclusive';
   /** Path rules used with `mode`. */
@@ -869,6 +874,8 @@ async function startForwardProxy(opts: ForwardWorkerOptions): Promise<ProxyWorke
   const client = ProxyClient(fetchFn as Parameters<typeof ProxyClient>[0], {
     strategy:         'manual',
     cache_ttl:        opts.cacheTtl,
+    profiles:         opts.profiles,
+    profile:          opts.profile,
     limit_usd:        opts.budget,
     node_region:      opts.nodeRegion,
     node_domain:      opts.nodeDomain,

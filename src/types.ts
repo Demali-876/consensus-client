@@ -161,6 +161,22 @@ export const PRICING_PRESETS: Record<'TIME' | 'DATA' | 'HYBRID', SessionPricing>
 export type ProxyMode = 'inclusive' | 'exclusive';
 export type ProxyStrategy = 'auto' | 'manual';
 
+/** A reusable, local-only forward-proxy policy; profiles are never registered with the server. */
+export type ProxyProfile = {
+  /** Base URL used to resolve relative fetch/request targets and constrain absolute targets. */
+  base_url: string;
+  /** HTTP methods allowed through this profile (default: GET and HEAD). */
+  allowed_methods?: string[];
+  /** Origin-relative path prefixes allowed through this profile (default: /). */
+  allowed_paths?: string[];
+  cache_ttl?: number;
+  verbose?: boolean;
+  node_region?: string;
+  node_domain?: string;
+  node_exclude?: string;
+  direct?: boolean;
+};
+
 export type ProxyBudgetSnapshot = {
   /** Configured max spend in USD, or null when no limit is configured. */
   limit_usd: number | null;
@@ -175,6 +191,10 @@ export type ProxyBudgetSnapshot = {
 };
 
 export type ProxyClientOptions = {
+  /** Local named profiles available to this client; profile definitions never leave the process. */
+  profiles?: Record<string, ProxyProfile>;
+  /** Default local profile name, overridable per request. */
+  profile?: string;
   /**
    * Route filtering behavior for inbound server paths.
    * - "inclusive": proxy everything except `routes`

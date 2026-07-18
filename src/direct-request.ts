@@ -11,7 +11,7 @@
 //   - body:    consensus `server/features/proxy/dedupe.ts` computeBodyHash
 
 // Mirror of the orchestrator's STRIP_REQUEST_HEADERS. The hop-by-hop entries are
-// also dropped by the node; the rest are consensus-internal (x-api-key, x-cache-ttl,
+// also dropped by the node; the rest are consensus-internal (x-cache-ttl,
 // x-direct, x-node-*, x-payment, …) and would otherwise leak to the upstream, since
 // the node only strips hop-by-hop headers.
 const STRIP_REQUEST_HEADERS = new Set([
@@ -24,6 +24,8 @@ const STRIP_REQUEST_HEADERS = new Set([
   'idempotency-key',
   'x-payment',
   'x-verbose',
+  // Deprecated identity header: retained only as a denylist entry so older
+  // callers cannot leak it to an upstream; it has no routing or cache semantics.
   'x-api-key',
   'x-cache-ttl',
   'x-direct',

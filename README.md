@@ -85,6 +85,8 @@ CONSENSUS_SERVER_URL=https://your-custom-node.example.com
 | `routes`           | `string[]`                   | `[]`          | Route paths to include or exclude, depending on `mode`.                                                                           |
 | `matchSubroutes`   | `boolean`                    | `false`       | When `true`, a route match also applies to all sub-paths beneath it.                                                              |
 | `strategy`         | `"auto" \| "manual"`         | `"auto"`      | `auto` transparently intercepts `fetch()` calls within middleware. `manual` exposes `req.consensus.fetch()` for explicit control. |
+| `profiles`         | `Record<string, ProxyProfile>` | `{}`          | Local named origin, path, method, cache, and routing policies that never leave the process.                                       |
+| `profile`          | `string`                       | —             | Default local profile name, overridable per request.                                                                              |
 | `cache_ttl`        | `number`                     | —             | TTL in seconds for node-level response caching.                                                                                   |
 | `verbose`          | `boolean`                    | `false`       | Enables verbose response metadata from the proxy node.                                                                            |
 | `node_region`      | `string`                     | —             | Prefer proxy nodes in a specific geographic region.                                                                               |
@@ -94,6 +96,28 @@ CONSENSUS_SERVER_URL=https://your-custom-node.example.com
 | `on_limit_reached` | `(budget) => void`           | —             | Callback fired once when stand-down is activated.                                                                                 |
 
 Proxy spend tracking uses the fixed server price of `$0.0001` per paid `/proxy` request (cached hits are not charged).
+
+### Local Proxy Profiles
+
+Profiles are anonymous local SDK configuration: the SDK resolves and validates them before sending the ordinary proxy request, and neither the profile name nor definition is registered with Consensus.
+
+```ts
+const proxy = ProxyClient(fetchWithPayment, {
+  profiles: {
+    catalog: {
+      base_url: 'https://api.example.com/v1',
+      allowed_methods: ['GET'],
+      allowed_paths: ['/products', '/search'],
+      cache_ttl: 120,
+      node_region: 'us-east',
+    },
+  },
+  profile: 'catalog',
+});
+
+await proxy.fetch('/products/42');
+await proxy.fetch('/search?q=node', {}, { profile: 'catalog', cache_ttl: 30 });
+```
 
 ### Auto Strategy (Default)
 

@@ -1,4 +1,5 @@
 export { ProxyClient }                                from './proxy-client.js';
+export type { ProxyProfile }                          from './types.js';
 export { SocketClient }                               from './socket-client.js';
 
 // ─── Direct data plane (node connector) ───────────────────────────────────────

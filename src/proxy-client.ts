@@ -1,6 +1,6 @@
 
 import { AsyncLocalStorage } from 'async_hooks';
-import { ProxyClientOptions, ProxyMode, ProxyPayload, ProxyResponseShape, ProxyClientMiddleware, ProxyStrategy, ProxyBudgetSnapshot, ProxyClientError, MiddlewareReq, Next, NodeConnector} from './types'
+import { ProxyClientOptions, ProxyMode, ProxyPayload, ProxyResponseShape, ProxyClientMiddleware, ProxyStrategy, ProxyBudgetSnapshot, ProxyClientError, MiddlewareReq, Next, NodeConnector, ProxyProfile} from './types'
 import { connectToNode, type NodeRoute } from './node-connect.js';
 import { forwardHeaders, canonicalNodeBody } from './direct-request.js';
 import type { ProxyResponsePayload } from './dataplane/tunnel/data-plane.js';
@@ -63,6 +63,129 @@ function shouldProxyPath(pathname: string, options: ProxyClientOptions): boolean
   const matched = routes.some((route) => pathMatches(pathname, route, matchSubroutes));
 
   return mode === 'exclusive' ? matched : !matched;
+}
+
+type NormalizedProxyProfile = ProxyProfile & {
+  base_url: string;
+  allowed_methods: string[];
+  allowed_paths: string[];
+};
+
+const PROFILE_NAME = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
+const PROFILE_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
+
+function normalizeProfilePath(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) {
+    throw new TypeError(`${field} must be an origin-relative path beginning with /`);
+  }
+  const parsed = new URL(value, 'http://profile.local');
+  if (parsed.origin !== 'http://profile.local' || parsed.hash) {
+    throw new TypeError(`${field} must not change the profile origin or contain a fragment`);
+  }
+  return parsed.pathname;
+}
+
+function normalizeProxyProfiles(input: ProxyClientOptions['profiles']): Map<string, NormalizedProxyProfile> {
+  const profiles = new Map<string, NormalizedProxyProfile>();
+  for (const [name, value] of Object.entries(input ?? {})) {
+    if (!PROFILE_NAME.test(name)) {
+      throw new TypeError(`Invalid proxy profile name: ${name}`);
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new TypeError(`Proxy profile ${name} must be an object`);
+    }
+
+    let base: URL;
+    try { base = new URL(value.base_url); } catch { throw new TypeError(`Proxy profile ${name} has an invalid base_url`); }
+    if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
+      throw new TypeError(`Proxy profile ${name} base_url must be an http(s) URL without credentials, query, or fragment`);
+    }
+    base.pathname = base.pathname === '/' ? '/' : base.pathname.replace(/\/+$/, '');
+
+    const methodInput = value.allowed_methods ?? ['GET', 'HEAD'];
+    if (!Array.isArray(methodInput)) {
+      throw new TypeError(`Proxy profile ${name} allowed_methods must be an array`);
+    }
+    const methods = [...new Set(methodInput.map((method) => String(method).toUpperCase()))];
+    if (methods.length === 0 || methods.some((method) => !PROFILE_METHODS.has(method))) {
+      throw new TypeError(`Proxy profile ${name} has invalid allowed_methods`);
+    }
+    const pathInput = value.allowed_paths ?? ['/'];
+    if (!Array.isArray(pathInput)) {
+      throw new TypeError(`Proxy profile ${name} allowed_paths must be an array`);
+    }
+    const paths = [...new Set(pathInput.map((path) => normalizeProfilePath(path, `Proxy profile ${name} allowed_paths entry`)))];
+    if (paths.length === 0 || paths.length > 64) {
+      throw new TypeError(`Proxy profile ${name} must have between 1 and 64 allowed_paths`);
+    }
+
+    profiles.set(name, {
+      ...value,
+      base_url: base.toString(),
+      allowed_methods: methods,
+      allowed_paths: paths,
+    });
+  }
+  return profiles;
+}
+
+function relativeProfilePath(profile: NormalizedProxyProfile, target: URL): string {
+  const base = new URL(profile.base_url);
+  if (target.origin !== base.origin) {
+    throw Object.assign(new ProxyClientError('Proxy profile target is outside its configured origin'), { status: 403 });
+  }
+  const basePath = base.pathname === '/' ? '' : base.pathname.replace(/\/$/, '');
+  if (basePath && target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`)) {
+    throw Object.assign(new ProxyClientError('Proxy profile target is outside its configured base path'), { status: 403 });
+  }
+  const relative = target.pathname.slice(basePath.length) || '/';
+  return relative.startsWith('/') ? relative : `/${relative}`;
+}
+
+function resolveProfileTarget(profile: NormalizedProxyProfile, rawTarget: string): string {
+  let target: URL;
+  try {
+    target = new URL(rawTarget);
+  } catch {
+    const base = new URL(profile.base_url);
+    const relative = new URL(rawTarget.startsWith('/') ? rawTarget : `/${rawTarget}`, 'http://profile.local');
+    if (relative.hash) {
+      throw Object.assign(new ProxyClientError('Proxy profile targets cannot contain fragments'), { status: 403 });
+    }
+    const basePath = base.pathname === '/' ? '' : base.pathname.replace(/\/$/, '');
+    base.pathname = `${basePath}${relative.pathname}` || '/';
+    base.search = relative.search;
+    target = base;
+  }
+  if (target.username || target.password || target.hash) {
+    throw Object.assign(new ProxyClientError('Proxy profile targets cannot contain credentials or fragments'), { status: 403 });
+  }
+  const relative = relativeProfilePath(profile, target);
+  const allowed = profile.allowed_paths.some((prefix) =>
+    prefix === '/' || relative === prefix || relative.startsWith(`${prefix}/`)
+  );
+  if (!allowed) {
+    throw Object.assign(new ProxyClientError('Proxy profile target path is not allowed'), { status: 403 });
+  }
+  return target.toString();
+}
+
+function assertProfileMethod(profile: NormalizedProxyProfile, method: string): void {
+  if (!profile.allowed_methods.includes(method.toUpperCase())) {
+    throw Object.assign(new ProxyClientError(`Method ${method.toUpperCase()} is not allowed by the proxy profile`), { status: 403 });
+  }
+}
+
+function profileControlOptions(profile: NormalizedProxyProfile | null): Partial<ProxyClientOptions> {
+  if (!profile) return {};
+  return {
+    cache_ttl: profile.cache_ttl,
+    verbose: profile.verbose,
+    node_region: profile.node_region,
+    node_domain: profile.node_domain,
+    node_exclude: profile.node_exclude,
+    direct: profile.direct,
+  };
 }
 
 function controlHeadersFromOptions(options: Partial<ProxyClientOptions>): Record<string, string> {
@@ -177,7 +300,8 @@ function bodyToInit(body: unknown, headers: Record<string, string>): BodyInit | 
 async function buildProxyPayload(
   input: RequestInfo | URL,
   init: RequestInit = {},
-  controlHeaders: Record<string, string>
+  controlHeaders: Record<string, string>,
+  profile: NormalizedProxyProfile | null = null,
 ): Promise<ProxyPayload> {
   let targetUrl: string;
   let method = 'GET';
@@ -200,6 +324,10 @@ async function buildProxyPayload(
   }
 
   method = String(init.method || method || 'GET').toUpperCase();
+  if (profile) {
+    targetUrl = resolveProfileTarget(profile, targetUrl);
+    assertProfileMethod(profile, method);
+  }
   headers = {
     ...controlHeaders,
     ...headers,
@@ -414,8 +542,23 @@ export function ProxyClient(
   // request) forces the relayed path. The connector is injectable for testing.
   const directEnabled = options.direct !== false;
   const connector: NodeConnector = options.connectToNode ?? connectToNode;
-  const resolveDirect = (opts: Partial<ProxyClientOptions>): boolean =>
-    typeof opts.direct === 'boolean' ? opts.direct : directEnabled;
+  const profiles = normalizeProxyProfiles(options.profiles);
+  if (options.profile && !profiles.has(options.profile)) {
+    throw new TypeError(`Unknown default proxy profile: ${options.profile}`);
+  }
+  const selectProfile = (opts: Partial<ProxyClientOptions>): NormalizedProxyProfile | null => {
+    const name = opts.profile ?? options.profile;
+    if (!name) return null;
+    const profile = profiles.get(name);
+    if (!profile) throw new ProxyClientError(`Unknown proxy profile: ${name}`);
+    return profile;
+  };
+  const resolveDirect = (opts: Partial<ProxyClientOptions>, profile: NormalizedProxyProfile | null): boolean =>
+    typeof opts.direct === 'boolean'
+      ? opts.direct
+      : typeof profile?.direct === 'boolean'
+        ? profile.direct
+        : directEnabled;
   const baseControlHeaders = controlHeadersFromOptions(options);
   const limitMicros = parseUsdToMicros(options.limit_usd, 'limit_usd');
   const requestCostMicros =
@@ -523,7 +666,7 @@ export function ProxyClient(
       nodeResponse = await connector(route, {
         target_url: payload.target_url!,
         method: String(payload.method || 'GET').toUpperCase(),
-        // Strip consensus control headers (incl. x-api-key) so they don't leak to
+        // Strip Consensus control and deprecated identity headers so they don't leak to
         // the upstream, and canonicalize the body so the node recomputes the same
         // dedupe key the ticket is bound to.
         headers: forwardHeaders(payload.headers),
@@ -578,16 +721,19 @@ export function ProxyClient(
     init: RequestInit = {},
     perRequestOptions: Partial<ProxyClientOptions> = {}
   ): Promise<Response> {
-    if (isStandDown()) {
-      return passthroughFetchOrThrow(input, init);
-    }
-
+    const profile = selectProfile(perRequestOptions);
     const controlHeaders = {
       ...baseControlHeaders,
+      ...controlHeadersFromOptions(profileControlOptions(profile)),
       ...controlHeadersFromOptions(perRequestOptions),
     };
-    const payload = await buildProxyPayload(input, init, controlHeaders);
-    const proxyResult = await requestProxy(payload, resolveDirect(perRequestOptions));
+    const payload = await buildProxyPayload(input, init, controlHeaders, profile);
+    if (isStandDown()) {
+      const directResult = await requestDirectFromPayload(payload, 'limit_reached');
+      const requestUrl = payload.target_url ?? String(input);
+      return toFetchResponse(directResult, requestUrl);
+    }
+    const proxyResult = await requestProxy(payload, resolveDirect(perRequestOptions, profile));
     incrementSpend(proxyResult);
 
     const requestUrl =
@@ -599,24 +745,36 @@ export function ProxyClient(
     payload: Partial<ProxyPayload> = {},
     perRequestOptions: Partial<ProxyClientOptions> = {}
   ): Promise<ProxyResponseShape> {
-    if (isStandDown()) {
-      return requestDirectFromPayload(payload, 'limit_reached');
-    }
-
+    const profile = selectProfile(perRequestOptions);
     const controlHeaders = {
       ...baseControlHeaders,
+      ...controlHeadersFromOptions(profileControlOptions(profile)),
       ...controlHeadersFromOptions(perRequestOptions),
       ...normalizeHeaders(payload.headers),
     };
 
+    const method = String(payload.method || 'GET').toUpperCase();
+    let targetUrl = payload.target_url ? String(payload.target_url) : '';
+    if (profile) {
+      if (payload.target_ref) throw new ProxyClientError('Proxy profiles cannot target private tunnels');
+      targetUrl = resolveProfileTarget(profile, targetUrl);
+      assertProfileMethod(profile, method);
+    }
+
+    const requestPayload: ProxyPayload = {
+      ...(payload.target_ref ? { target_ref: payload.target_ref } : { target_url: targetUrl }),
+      method,
+      headers: controlHeaders,
+      ...(typeof payload.body !== 'undefined' ? { body: payload.body } : {}),
+    };
+
+    if (isStandDown()) {
+      return requestDirectFromPayload(requestPayload, 'limit_reached');
+    }
+
     const proxyResult = await requestProxy(
-      {
-        ...(payload.target_ref ? { target_ref: payload.target_ref } : { target_url: String(payload.target_url || '') }),
-        method: String(payload.method || 'GET').toUpperCase(),
-        headers: controlHeaders,
-        ...(typeof payload.body !== 'undefined' ? { body: payload.body } : {}),
-      },
-      resolveDirect(perRequestOptions)
+      requestPayload,
+      resolveDirect(perRequestOptions, profile)
     );
 
     incrementSpend(proxyResult);
