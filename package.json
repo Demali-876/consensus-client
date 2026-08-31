@@ -1,6 +1,6 @@
 {
   "name": "@canister-software/consensus-cli",
-  "version": "0.1.0-beta.7",
+  "version": "0.2.0-beta.0",
   "description": "Consensus SDK for interacting with the Consensus protocol",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -16,7 +16,7 @@
     "./cli": "./bin/consensus.ts"
   },
   "bin": {
-    "consensus": "./bin/consensus"
+    "consensus": "bin/consensus"
   },
   "scripts": {
     "clean": "rm -rf dist",
@@ -24,16 +24,18 @@
     "build:esm": "bun build src/index.ts --outfile dist/index.js  --format esm --target node --packages=external",
     "build:cjs": "bun build src/index.ts --outfile dist/index.cjs --format cjs --target node --packages=external",
     "build:types": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "bun run build",
+    "release:beta": "bun run build && clean-publish --tag beta",
     "consensus": "bun bin/consensus.ts",
     "dev": "printf \"\\033[8;${CONSENSUS_DEV_ROWS:-45};${CONSENSUS_DEV_COLS:-155}t\" && bun --watch bin/consensus.ts",
     "dev:cmd": "bun --watch bin/consensus.ts",
+    "setup": "bun bin/consensus.ts setup",
+    "reset": "bun bin/consensus.ts setup --force",
     "preview:proxy": "bun bin/dev/preview-proxy-dashboard.ts",
     "preview:proxy:forward:free": "bun bin/dev/preview-proxy-dashboard.ts forward --free",
     "preview:proxy:forward:paid": "bun bin/dev/preview-proxy-dashboard.ts forward --paid",
     "preview:proxy:reverse:free": "bun bin/dev/preview-proxy-dashboard.ts reverse --free",
     "preview:proxy:reverse:paid": "bun bin/dev/preview-proxy-dashboard.ts reverse --paid",
-    "setup": "bun bin/consensus.ts setup",
-    "reset": "bun bin/consensus.ts setup --force",
     "start-server": "bun test/proxy/server.ts"
   },
   "dependencies": {
@@ -60,9 +62,10 @@
   },
   "devDependencies": {
     "@types/inquirer": "^9.0.9",
-    "@types/ws": "^8.18.1",
     "@types/node": "^20.0.0",
+    "@types/ws": "^8.18.1",
     "bun-types": "latest",
+    "clean-publish": "^7.1.0",
     "typescript": "^5.0.0"
   },
   "keywords": [

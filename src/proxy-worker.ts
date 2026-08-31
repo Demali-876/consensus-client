@@ -7,7 +7,7 @@ import WebSocket from 'ws';
 import { ProxyClient }                          from './proxy-client.js';
 import { createPaymentFetch, type PreferNetwork } from './payment-fetch.js';
 import type { ResolvedSigners as ResolvedWallet }  from './wallet.js';
-import type { ProxyProfile }                       from './types.js';
+import type { ProxyProfile, ProxyMode, LegacyProxyMode } from './types.js';
 
 type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 const CONSENSUS_SERVER_URL = (process.env.CONSENSUS_SERVER_URL || 'https://consensus.canister.software').replace(/\/+$/, '');
@@ -478,9 +478,9 @@ export type ForwardWorkerOptions = {
   profiles?:    Record<string, ProxyProfile>;
   /** Default local profile used by the worker. */
   profile?:     string;
-  /** Route filtering mode — passed to ProxyClient. */
-  mode?:           'inclusive' | 'exclusive';
-  /** Path rules used with `mode`. */
+  /** How `routes` is interpreted — passed straight to ProxyClient. */
+  mode?:           ProxyMode | LegacyProxyMode;
+  /** Path rules selected by `mode`. Requires an explicit `mode` when non-empty. */
   routes?:         string[];
   /** Whether to include subroutes when matching `routes`. */
   matchSubroutes?: boolean;

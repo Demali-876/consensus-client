@@ -31,8 +31,8 @@ const profiles = {
   },
 };
 
-describe('ProxyClient local profiles', () => {
-  test('resolves a relative target and applies profile controls without sending profile identity', async () => {
+describe('ProxyClient profile-v1 execution plans', () => {
+  test('resolves a relative target and sends an anonymous normalized execution plan', async () => {
     const relayStub = relay();
     const client = ProxyClient(relayStub.fetch, { profiles, profile: 'catalog' });
 
@@ -43,7 +43,18 @@ describe('ProxyClient local profiles', () => {
     expect(relayStub.captured[0].payload.headers['x-cache-ttl']).toBe('120');
     expect(relayStub.captured[0].payload.headers['x-node-region']).toBe('us-east');
     expect(relayStub.captured[0].payload.headers['x-direct']).toBeUndefined();
-    expect(relayStub.captured[0].payload.profile).toBeUndefined();
+    expect(relayStub.captured[0].payload.profile).toEqual({
+      protocol: 'consensus.proxy-profile',
+      version: 1,
+      base_url: 'https://api.example.com/v1',
+      allowed_methods: ['GET'],
+      allowed_paths: ['/products', '/search'],
+      cache_ttl: 120,
+      verbose: false,
+      node_region: 'us-east',
+      direct: false,
+    });
+    expect(relayStub.captured[0].payload.profile_name).toBeUndefined();
   });
 
   test('supports selecting a profile per request and allows explicit per-request control overrides', async () => {
@@ -54,6 +65,25 @@ describe('ProxyClient local profiles', () => {
 
     expect(relayStub.captured[0].payload.target_url).toBe('https://api.example.com/v1/search?q=node');
     expect(relayStub.captured[0].payload.headers['x-cache-ttl']).toBe('30');
+    expect(relayStub.captured[0].payload.profile.cache_ttl).toBe(30);
+  });
+
+  test('inherits global controls only when the named profile does not override them', async () => {
+    const relayStub = relay();
+    const client = ProxyClient(relayStub.fetch, {
+      direct: false,
+      cache_ttl: 45,
+      profiles: {
+        public: {
+          base_url: 'https://api.example.com',
+          allowed_paths: ['/products'],
+        },
+      },
+      profile: 'public',
+    });
+    await client.fetch('/products');
+    expect(relayStub.captured[0].payload.profile.direct).toBe(false);
+    expect(relayStub.captured[0].payload.profile.cache_ttl).toBe(45);
   });
 
   test('accepts an absolute target only when it remains inside the profile base path', async () => {
