@@ -272,7 +272,18 @@ describe('ProxyClient.batch', () => {
     // Budget covers 1 paid request, but the first wave of 4 was already dispatched.
     expect(stub.captured.length).toBeGreaterThan(1);
     expect(stub.captured.length).toBeLessThanOrEqual(4);
-    expect(client.getBudget().exhausted).toBe(true);
+
+    const budget = client.getBudget();
+    expect(budget.exhausted).toBe(true);
+
+    // The overshoot must be VISIBLE. Spend was previously clamped to limit_usd, so a
+    // four-worker batch with a one-request budget made four paid calls but reported
+    // one — an understated bill. Reported spend now matches what was actually paid.
+    expect(budget.spent_usd).toBeCloseTo(stub.captured.length * 0.0001, 10);
+    expect(budget.spent_usd).toBeGreaterThan(0.0001);
+
+    // remaining_usd still floors at zero rather than going negative.
+    expect(budget.remaining_usd).toBe(0);
   });
 
   test('on_limit_reached fires once when a batch exhausts the budget', async () => {

@@ -694,8 +694,12 @@ export function ProxyClient(
   function incrementSpend(proxyResult: ProxyResponseShape): void {
     if (requestCostMicros <= 0) return;
     if (!isLikelyPaidProxyResponse(proxyResult)) return;
+    // Deliberately NOT clamped to limitMicros. In parallel mode every worker can
+    // clear the stand-down check before any response comes back, so a batch can
+    // genuinely pay for more requests than the limit allows (up to concurrency-1
+    // over). Clamping reported a bill smaller than the one actually incurred.
+    // remaining_usd still floors at zero, so only spent_usd exceeds the limit.
     spentMicros += requestCostMicros;
-    if (limitMicros !== null && spentMicros > limitMicros) spentMicros = limitMicros;
     isStandDown();
   }
 

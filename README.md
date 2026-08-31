@@ -258,7 +258,7 @@ It *does* reject before dispatching anything if the input itself is malformed (a
 Each item is an independent paid `/proxy` request, so caching/dedupe, profiles, direct node routing, and the budget guard behave exactly as they do for a single `.request()`. The one behavioural difference between the modes is the budget:
 
 - **`'sequential'`** — the budget guard sees every response before the next request goes out, so a `limit_usd` cap is enforced **exactly**. Also the right choice for rate-limited upstreams, or when later requests depend on earlier ones completing.
-- **`'parallel'`** — faster, but up to `concurrency` requests are already in flight when the cap is reached, so spend can overshoot `limit_usd` by up to `concurrency - 1` requests. Keep `concurrency` low when running close to a hard cap.
+- **`'parallel'`** — faster, but up to `concurrency` requests are already in flight when the cap is reached, so spend can overshoot `limit_usd` by up to `concurrency - 1` requests. `getBudget().spent_usd` reports the **actual** amount paid, so it can exceed `limit_usd` after an overshoot (`remaining_usd` still floors at `0`). Keep `concurrency` low when running close to a hard cap.
 
 Items that arrive after the budget is exhausted stand down to a direct fetch, exactly as a single request would, and are reported as successes carrying `meta.bypassed === true`.
 
