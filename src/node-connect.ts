@@ -13,6 +13,7 @@ import {
   type MessageTransport,
   type ProxyResponsePayload,
 } from './dataplane/tunnel/data-plane.js';
+import type { ProxyExecutionProfileV1 } from './profile-v1.js';
 
 /** The routing ticket + node connection info the orchestrator returns from
  *  POST /proxy when `x-direct` selects a node. The ticket is opaque to the client. */
@@ -28,6 +29,7 @@ export interface NodeRoute {
   ticket: string;
   ticket_exp?: number;
   dedupe_key?: string;
+  profile_hash?: string;
 }
 
 /** The request to serve at the node. Headers/body must match what the orchestrator
@@ -37,6 +39,7 @@ export interface DirectRequest {
   method?: string;
   headers?: Record<string, string>;
   body?: string | Buffer | null;
+  profile?: ProxyExecutionProfileV1;
 }
 
 export interface ConnectToNodeOptions {

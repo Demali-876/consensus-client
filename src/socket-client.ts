@@ -206,8 +206,10 @@ export function SocketClient(
 
   function incrementSpend(quotedCostMicros: number): void {
     if (quotedCostMicros <= 0) return;
+    // Not clamped, for the same reason as the proxy client: a quote larger than the
+    // remaining budget is still paid in full, and reporting it as exactly the limit
+    // understates the real bill. remaining_usd still floors at zero.
     spentMicros += quotedCostMicros;
-    if (limitMicros !== null && spentMicros > limitMicros) spentMicros = limitMicros;
     isStandDown();
   }
 

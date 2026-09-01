@@ -1,5 +1,6 @@
 import type { NodeRoute, DirectRequest } from './node-connect';
 import type { ProxyResponsePayload } from './dataplane/tunnel/data-plane';
+import type { ProxyExecutionProfileV1 } from './profile-v1';
 
 export type ConsensusSocketModel = 'hybrid' | 'time' | 'data';
 
@@ -158,8 +159,39 @@ export const PRICING_PRESETS: Record<'TIME' | 'DATA' | 'HYBRID', SessionPricing>
 
 /*------proxy types----*/
 
-export type ProxyMode = 'inclusive' | 'exclusive';
+/**
+ * How `routes` is interpreted.
+ * - "only": proxy ONLY the listed routes (an allowlist).
+ * - "except": proxy everything EXCEPT the listed routes (a denylist). Default.
+ */
+export type ProxyMode = 'only' | 'except';
+
+/**
+ * Pre-0.2.0 names for {@link ProxyMode}, still accepted everywhere `ProxyMode` is.
+ *
+ * @deprecated Use `'only'` (was `'exclusive'`) or `'except'` (was `'inclusive'`).
+ * The old adjectives described the proxy's breadth while sitting next to `routes`,
+ * so they read as the inverse of what they did: under `'inclusive'`, listing a
+ * route *excluded* it from proxying.
+ */
+export type LegacyProxyMode = 'inclusive' | 'exclusive';
 export type ProxyStrategy = 'auto' | 'manual';
+
+/** A reusable anonymous forward-proxy policy compiled into a profile-v1 execution plan. */
+export type ProxyProfile = {
+  /** Base URL used to resolve relative fetch/request targets and constrain absolute targets. */
+  base_url: string;
+  /** HTTP methods allowed through this profile (default: GET and HEAD). */
+  allowed_methods?: string[];
+  /** Origin-relative path prefixes allowed through this profile (default: /). */
+  allowed_paths?: string[];
+  cache_ttl?: number;
+  verbose?: boolean;
+  node_region?: string;
+  node_domain?: string;
+  node_exclude?: string;
+  direct?: boolean;
+};
 
 export type ProxyBudgetSnapshot = {
   /** Configured max spend in USD, or null when no limit is configured. */
@@ -175,14 +207,25 @@ export type ProxyBudgetSnapshot = {
 };
 
 export type ProxyClientOptions = {
+  /** Local named profiles compiled into anonymous versioned execution plans. */
+  profiles?: Record<string, ProxyProfile>;
+  /** Default local profile name, overridable per request. */
+  profile?: string;
   /**
-   * Route filtering behavior for inbound server paths.
-   * - "inclusive": proxy everything except `routes`
-   * - "exclusive": proxy only `routes`
+   * How `routes` is interpreted for inbound server paths.
+   * - `"only"` — proxy ONLY the listed routes (allowlist).
+   * - `"except"` — proxy everything EXCEPT the listed routes (denylist). Default
+   *   when `routes` is empty or omitted.
+   *
+   * Required whenever `routes` is non-empty: `{ routes: ['/api'] }` is genuinely
+   * ambiguous, and guessing wrong silently inverts which routes you pay to proxy.
+   *
+   * The pre-0.2.0 names still work — `'exclusive'` means `'only'`, `'inclusive'`
+   * means `'except'` — but are deprecated.
    */
-  mode?: ProxyMode;
+  mode?: ProxyMode | LegacyProxyMode;
   /**
-   * Path rules used with `mode`, for example `["/health", "/metrics"]`.
+   * Path rules selected by `mode`, for example `["/health", "/metrics"]`.
    * Query params are ignored; matching is based on path only.
    */
   routes?: string[];
@@ -254,6 +297,7 @@ export type ProxyPayload = {
   };
   method: string;
   headers: Record<string, string>;
+  profile?: ProxyExecutionProfileV1;
   body?: unknown;
 };
 
@@ -278,6 +322,78 @@ export type ProxyResponseShape = {
     [key: string]: unknown;
   } | null;
 };
+/**
+ * The subset of `ProxyClientOptions` that is meaningful on a single request.
+ * The excluded keys configure the middleware itself (route filtering, the
+ * interception strategy, the profile registry, the client-wide budget) and are
+ * fixed for the life of the client, so overriding them per request is a no-op.
+ */
+export type ProxyRequestOptions = Omit<
+  Partial<ProxyClientOptions>,
+  | 'mode'
+  | 'routes'
+  | 'matchSubroutes'
+  | 'strategy'
+  | 'profiles'
+  | 'connectToNode'
+  | 'limit_usd'
+  | 'on_limit_reached'
+>;
+
+/*------batch types----*/
+
+/**
+ * How a batch is executed.
+ * - "parallel" (default): items run concurrently, bounded by `concurrency`.
+ * - "sequential": items run strictly one at a time, in input order. Slower, but
+ *   the budget guard sees every response before the next request is dispatched,
+ *   so a `limit_usd` cap is enforced exactly rather than approximately.
+ */
+export type BatchMode = 'parallel' | 'sequential';
+
+/**
+ * One item of a batch. A bare string/URL is shorthand for a GET of that target;
+ * the object form is the same payload `.request()` takes, plus optional
+ * per-item option overrides (profile, cache_ttl, region, direct, ...).
+ */
+export type BatchRequestInput =
+  | string
+  | URL
+  | (Partial<ProxyPayload> & { options?: ProxyRequestOptions });
+
+export type BatchOptions = ProxyRequestOptions & {
+  /** Execution mode. Defaults to "parallel". */
+  mode?: BatchMode;
+  /**
+   * Max requests in flight at once in "parallel" mode (default 8).
+   * Ignored in "sequential" mode, which is always one at a time.
+   */
+  concurrency?: number;
+  /**
+   * Stops dispatching further items when aborted. Requests already in flight are
+   * not cancelled — they may already have been paid for — so they still settle;
+   * every item not yet dispatched fails with `error.data.aborted === true`.
+   */
+  signal?: AbortSignal;
+};
+
+export type BatchItemSuccess = {
+  ok: true;
+  /** Position of this item in the input array. */
+  index: number;
+  value: ProxyResponseShape;
+};
+
+export type BatchItemFailure = {
+  ok: false;
+  /** Position of this item in the input array. */
+  index: number;
+  error: ProxyClientError;
+};
+
+/** Result of one batch item. `batch()` settles every item and never rejects on one. */
+export type BatchItemResult = BatchItemSuccess | BatchItemFailure;
+
 type FetchWithPayment = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export type ConsensusContext = {
   strategy: ProxyStrategy;
@@ -291,6 +407,7 @@ export type ConsensusContext = {
     payload: Partial<ProxyPayload>,
     perRequestOptions?: Partial<ProxyClientOptions>
   ) => Promise<ProxyResponseShape>;
+  batch: (requests: readonly BatchRequestInput[], options?: BatchOptions) => Promise<BatchItemResult[]>;
   passthroughFetch: FetchWithPayment | null;
   createFetch: (pathname?: string) => FetchWithPayment;
   getBudget: () => ProxyBudgetSnapshot;
@@ -323,6 +440,11 @@ export type ProxyClientRuntime = {
     payload: Partial<ProxyPayload>,
     perRequestOptions?: Partial<ProxyClientOptions>
   ) => Promise<ProxyResponseShape>;
+  /**
+   * Run many proxy requests as one group. Settles every item and never rejects
+   * on an individual failure — results come back in input order.
+   */
+  batch: (requests: readonly BatchRequestInput[], options?: BatchOptions) => Promise<BatchItemResult[]>;
   runWithPath: <T>(pathname: string, run: () => T | Promise<T>) => Promise<T>;
   createFetch: (pathname?: string) => FetchWithPayment;
   getBudget: () => ProxyBudgetSnapshot;

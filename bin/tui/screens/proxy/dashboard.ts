@@ -202,7 +202,7 @@ export async function showProxyDashboard(
       : 'set an entry file in forward setup to enable auto-launch';
     appPanel.fetchMode.content = 'preload → globalThis.fetch → consensus';
     appPanel.preload.content = `${preloadName} · auto restart ${entry.autoLaunch ? 'enabled' : 'disabled'}`;
-    appPanel.routing.content = `${entry.mode ?? 'inclusive'} · ${(entry.routes?.length ? entry.routes.join(', ') : 'all routes')} · subroutes ${entry.matchSubroutes ? 'on' : 'off'}`;
+    appPanel.routing.content = `${entry.mode ?? 'except'} · ${(entry.routes?.length ? entry.routes.join(', ') : 'all routes')} · subroutes ${entry.matchSubroutes ? 'on' : 'off'}`;
     appPanel.node.content = `${entry.nodeDomain ?? entry.nodeRegion ?? 'auto'} · auto · ${fmtLatency(stats.avgLatencyMs)}`;
   }
 

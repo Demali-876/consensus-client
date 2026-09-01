@@ -95,7 +95,7 @@ function buildPreviewEntry(mode: PreviewMode, freeMode: boolean): WorkerEntry {
     cacheTtl: 300,
     nodeRegion: 'us-west-1',
     preferNetwork: 'eip155:84532',
-    mode: 'inclusive',
+    mode: 'except',
     routes: ['/api', '/v2'],
     matchSubroutes: true,
     managedApp: makePreviewAppState(),

@@ -19,6 +19,7 @@
 import { openFrame, sealFrame } from "../crypto/secure-channel";
 import { FRAME_TYPE } from "./frames";
 import { createDataInit, deriveClientDataSession, type DataAcceptMessage } from "./data-handshake";
+import type { ProxyExecutionProfileV1 } from "../../profile-v1";
 
 export const DATA_PLANE_PATH = "/connect";
 
@@ -37,6 +38,7 @@ export interface ProxyRequestPayload {
   headers?: Record<string, string>;
   body?: string; // base64 when present
   body_encoding?: "base64";
+  profile?: ProxyExecutionProfileV1;
 }
 
 export type ProxyResponsePayload =
@@ -47,6 +49,8 @@ export type ProxyResponsePayload =
       headers: Record<string, string>;
       body: string; // base64
       body_encoding: "base64";
+      cached?: boolean;
+      profile_hash?: string;
     }
   | { type: "error"; code: string; message: string };
 
@@ -58,7 +62,7 @@ export async function runDataRequest(
     nodeId: string;
     expectedNodePublicKeyPem: string;
     token: string;
-    request: { target_url: string; method?: string; headers?: Record<string, string>; body?: string | Buffer | null };
+    request: { target_url: string; method?: string; headers?: Record<string, string>; body?: string | Buffer | null; profile?: ProxyExecutionProfileV1 };
   },
 ): Promise<ProxyResponsePayload> {
   const client = await createDataInit({ nodeId: params.nodeId });
@@ -81,6 +85,7 @@ export async function runDataRequest(
     headers: params.request.headers,
     body: body ? body.toString("base64") : undefined,
     body_encoding: body ? "base64" : undefined,
+    profile: params.request.profile,
   };
   await transport.send(sealFrame(session.sendKey, FRAME_TYPE.DATA, 0n, encodeJson(payload)));
 

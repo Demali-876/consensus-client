@@ -1,4 +1,20 @@
 export { ProxyClient }                                from './proxy-client.js';
+export type { ProxyProfile }                          from './types.js';
+
+// ─── Batch requests ───────────────────────────────────────────────────────────
+export { DEFAULT_BATCH_CONCURRENCY }                  from './batch.js';
+export type { ProxyRequestOptions }                   from './types.js';
+export type { ProxyMode, LegacyProxyMode }            from './types.js';
+export type {
+  BatchMode,
+  BatchOptions,
+  BatchRequestInput,
+  BatchItemResult,
+  BatchItemSuccess,
+  BatchItemFailure,
+}                                                     from './types.js';
+export type { ProxyExecutionProfileV1 }               from './profile-v1.js';
+export { PROXY_PROFILE_PROTOCOL, PROXY_PROFILE_VERSION } from './profile-v1.js';
 export { SocketClient }                               from './socket-client.js';
 
 // ─── Direct data plane (node connector) ───────────────────────────────────────

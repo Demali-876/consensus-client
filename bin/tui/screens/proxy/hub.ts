@@ -2,6 +2,7 @@ import { createCliRenderer, BoxRenderable, TextRenderable } from '@opentui/core'
 import { C }                     from '../../../theme';
 import type { AppState } from '../../../lib/app-manager.js';
 import type { ProxyWorkerHandle } from '../../../../src/proxy-worker.js';
+import type { ProxyMode, LegacyProxyMode } from '../../../../src/types.js';
 
 export type WorkerEntry = {
   handle:    ProxyWorkerHandle;
@@ -19,7 +20,7 @@ export type WorkerEntry = {
   nodeDomain?:     string;
   nodeExclude?:    string;
   preferNetwork?:  string;
-  mode?:           'inclusive' | 'exclusive';
+  mode?:           ProxyMode | LegacyProxyMode;
   routes?:         string[];
   matchSubroutes?: boolean;
 };

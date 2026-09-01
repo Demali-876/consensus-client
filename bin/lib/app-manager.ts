@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { ProxyMode, LegacyProxyMode } from '../../src/types.js';
 
 const decoder = new TextDecoder();
 
@@ -14,7 +15,7 @@ type PreloadOpts = {
   nodeExclude?:   string;
   budget?:        number;
   preferNetwork?: string;
-  mode?:          'inclusive' | 'exclusive';
+  mode?:          ProxyMode | LegacyProxyMode;
   routes?:        string[];
   matchSubroutes?: boolean;
 };
@@ -142,7 +143,7 @@ type LaunchAppOptions = {
   nodeExclude?:    string;
   budget?:         number;
   preferNetwork?:  string;
-  mode?:           'inclusive' | 'exclusive';
+  mode?:           ProxyMode | LegacyProxyMode;
   routes?:         string[];
   matchSubroutes?: boolean;
 };

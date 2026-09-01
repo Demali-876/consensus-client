@@ -9,6 +9,7 @@ import { ProxyClient } from '../src/proxy-client.js';
 import { forwardHeaders, canonicalNodeBody } from '../src/direct-request.js';
 import { ProxyClientError, type NodeConnector } from '../src/types.js';
 import type { ProxyResponsePayload } from '../src/dataplane/tunnel/data-plane.js';
+import { hashProxyProfileV1 } from '../src/profile-v1.js';
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -112,6 +113,39 @@ describe('ProxyClient direct routing', () => {
     expect(captured!.request.headers['x-direct']).toBeUndefined();
     expect(captured!.request.headers.authorization).toBe('Bearer xyz');
     expect(captured!.request.body).toBe('{"a":1,"b":2}');
+  });
+
+  test('carries the same profile-v1 plan through the ticketed node request', async () => {
+    let serverPayload: Record<string, any> | null = null;
+    let nodeRequest: any = null;
+    const server: FetchLike = async (_input, init) => {
+      serverPayload = JSON.parse(String(init?.body ?? '{}'));
+      return json({
+        route: { ...ROUTE, profile_hash: hashProxyProfileV1(serverPayload!.profile) },
+        meta: { direct: true, served_by: 'n1' },
+      });
+    };
+    const connector: NodeConnector = async (_route, request) => {
+      nodeRequest = request;
+      return nodeServes({ profile: true });
+    };
+    const client = ProxyClient(server as never, {
+      connectToNode: connector,
+      profiles: {
+        catalog: {
+          base_url: 'https://api.example.com/v1',
+          allowed_methods: ['GET'],
+          allowed_paths: ['/products'],
+          cache_ttl: 60,
+          direct: true,
+        },
+      },
+      profile: 'catalog',
+    });
+
+    await client.request({ target_url: '/products/1', method: 'GET' });
+    expect(serverPayload!.profile.protocol).toBe('consensus.proxy-profile');
+    expect(nodeRequest.profile).toEqual(serverPayload!.profile);
   });
 
   test('node error payload becomes a thrown ProxyClientError with a status', async () => {

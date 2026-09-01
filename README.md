@@ -81,10 +81,12 @@ CONSENSUS_SERVER_URL=https://your-custom-node.example.com
 
 | Option             | Type                         | Default       | Description                                                                                                                       |
 | ------------------ | ---------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `mode`             | `"inclusive" \| "exclusive"` | `"inclusive"` | `inclusive` proxies all routes **except** those in `routes`. `exclusive` proxies **only** the listed routes.                      |
-| `routes`           | `string[]`                   | `[]`          | Route paths to include or exclude, depending on `mode`.                                                                           |
+| `mode`             | `"only" \| "except"`         | `"except"`    | `only` proxies **only** the listed `routes` (allowlist). `except` proxies everything **but** the listed `routes` (denylist). Required whenever `routes` is non-empty. |
+| `routes`           | `string[]`                   | `[]`          | Path rules selected by `mode`. Query params are ignored; matching is on path only.                                                |
 | `matchSubroutes`   | `boolean`                    | `false`       | When `true`, a route match also applies to all sub-paths beneath it.                                                              |
 | `strategy`         | `"auto" \| "manual"`         | `"auto"`      | `auto` transparently intercepts `fetch()` calls within middleware. `manual` exposes `req.consensus.fetch()` for explicit control. |
+| `profiles`         | `Record<string, ProxyProfile>` | `{}`          | Local named policies compiled into anonymous versioned execution plans for the server and node.                                  |
+| `profile`          | `string`                       | —             | Default local profile name, overridable per request.                                                                              |
 | `cache_ttl`        | `number`                     | —             | TTL in seconds for node-level response caching.                                                                                   |
 | `verbose`          | `boolean`                    | `false`       | Enables verbose response metadata from the proxy node.                                                                            |
 | `node_region`      | `string`                     | —             | Prefer proxy nodes in a specific geographic region.                                                                               |
@@ -94,6 +96,51 @@ CONSENSUS_SERVER_URL=https://your-custom-node.example.com
 | `on_limit_reached` | `(budget) => void`           | —             | Callback fired once when stand-down is activated.                                                                                 |
 
 Proxy spend tracking uses the fixed server price of `$0.0001` per paid `/proxy` request (cached hits are not charged).
+
+### Route Filtering
+
+`mode` decides how `routes` is read. The two are exact inverses:
+
+```ts
+ProxyClient(fetchWithPayment, { mode: 'only',   routes: ['/api'] });     // proxy only /api
+ProxyClient(fetchWithPayment, { mode: 'except', routes: ['/health'] });  // proxy everything but /health
+ProxyClient(fetchWithPayment, {});                                       // proxy everything
+```
+
+`mode` is **required whenever `routes` is non-empty**. `{ routes: ['/api'] }` reads equally well as "proxy `/api`" and "don't proxy `/api`", and picking one silently would mean billing you for the opposite of what you meant, so it throws instead. Three other misconfigurations are rejected at construction rather than silently changing what you pay for:
+
+| Config | Result |
+| --- | --- |
+| `{ routes: ['/api'] }` | throws — say which `mode` you meant |
+| `{ mode: 'exclusve', routes: ['/api'] }` | throws — unrecognized `mode`, no silent fallback |
+| `{ mode: 'only', routes: [] }` | throws — an empty allowlist would disable proxying entirely |
+| `{ mode: 'except', routes: [] }` | fine — proxies everything (the default) |
+
+> **Renamed in 0.2.0.** `mode` was `'inclusive' | 'exclusive'`. Those names described the proxy's breadth while sitting next to `routes`, so they read as the inverse of what they did — under `'inclusive'`, listing a route *excluded* it. `'exclusive'` is now `'only'` and `'inclusive'` is now `'except'`. The old names still work as deprecated aliases with identical behaviour.
+
+### Proxy Profiles
+
+Profiles remain anonymous: the local name is never registered or transmitted, while the SDK sends a normalized `profile-v1` execution plan with each request. The main server and compatible nodes independently validate the origin, base path, allowed paths, and method; the profile hash is bound into cache deduplication and direct-routing tickets.
+
+```ts
+const proxy = ProxyClient(fetchWithPayment, {
+  profiles: {
+    catalog: {
+      base_url: 'https://api.example.com/v1',
+      allowed_methods: ['GET'],
+      allowed_paths: ['/products', '/search'],
+      cache_ttl: 120,
+      node_region: 'us-east',
+    },
+  },
+  profile: 'catalog',
+});
+
+await proxy.fetch('/products/42');
+await proxy.fetch('/search?q=node', {}, { profile: 'catalog', cache_ttl: 30 });
+```
+
+Profiles are a forward-proxy request feature and work through both node execution and the main-server fallback; they are not advertised as a node capability.
 
 ### Auto Strategy (Default)
 
@@ -108,7 +155,7 @@ const app = express();
 // Proxy only /price — all other routes use direct fetch
 app.use(
   ProxyClient(fetchWithPayment, {
-    mode: 'exclusive',
+    mode: 'only',
     routes: ['/price'],
     matchSubroutes: false,
     strategy: 'auto',
@@ -157,13 +204,73 @@ const response = await req.consensus.fetch(
 );
 ```
 
+### Batch Requests
+
+`batch()` runs many proxy requests as one group. Pass `mode` to choose how they are dispatched:
+
+```ts
+const results = await proxy.batch(
+  [
+    'https://api.example.com/users/1',
+    'https://api.example.com/users/2',
+    { target_url: 'https://api.example.com/events', method: 'POST', body: { kind: 'sync' } },
+  ],
+  { mode: 'parallel', concurrency: 4 }
+);
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `mode` | `'parallel'` | `'parallel'` dispatches concurrently; `'sequential'` runs strictly one at a time, in input order. |
+| `concurrency` | `8` | Max requests in flight in `'parallel'` mode. Ignored by `'sequential'`, which is always one at a time. |
+| `signal` | — | An `AbortSignal` that stops dispatching further items. |
+
+Any per-request option (`profile`, `cache_ttl`, `verbose`, `node_region`, `node_domain`, `node_exclude`, `direct`) can also be set at the batch level, and overridden on an individual item via its `options` key:
+
+```ts
+const results = await proxy.batch(
+  [
+    '/products/1',
+    { target_url: '/products/2', options: { cache_ttl: 5 } },
+  ],
+  { mode: 'sequential', profile: 'catalog', cache_ttl: 120 }
+);
+```
+
+**Every item settles.** `batch()` never rejects because one request failed — results come back in input order as a discriminated union, so a partial failure is a normal, inspectable outcome:
+
+```ts
+for (const result of results) {
+  if (result.ok) {
+    console.log(result.index, result.value.status, result.value.data);
+  } else {
+    console.error(result.index, result.error.status, result.error.message);
+  }
+}
+
+const succeeded = results.filter((r) => r.ok).map((r) => r.value);
+```
+
+It *does* reject before dispatching anything if the input itself is malformed (a missing `target_url`, a bad `mode`, a non-positive `concurrency`) — that's a programming error, and finding it halfway through a paid batch would be an expensive way to learn about a typo.
+
+#### Choosing a mode
+
+Each item is an independent paid `/proxy` request, so caching/dedupe, profiles, direct node routing, and the budget guard behave exactly as they do for a single `.request()`. The one behavioural difference between the modes is the budget:
+
+- **`'sequential'`** — the budget guard sees every response before the next request goes out, so a `limit_usd` cap is enforced **exactly**. Also the right choice for rate-limited upstreams, or when later requests depend on earlier ones completing.
+- **`'parallel'`** — faster, but up to `concurrency` requests are already in flight when the cap is reached, so spend can overshoot `limit_usd` by up to `concurrency - 1` requests. `getBudget().spent_usd` reports the **actual** amount paid, so it can exceed `limit_usd` after an overshoot (`remaining_usd` still floors at `0`). Keep `concurrency` low when running close to a hard cap.
+
+Items that arrive after the budget is exhausted stand down to a direct fetch, exactly as a single request would, and are reported as successes carrying `meta.bypassed === true`.
+
+> Batching is currently a client-side fan-out over the existing `POST /proxy` endpoint — one payment per item. The API is shaped so that a future server-side `POST /proxy/batch` (one payment and one routing pass for the whole group) can back it without a breaking change.
+
 ### Framework-Agnostic Usage
 
 Use `runWithPath()` to scope interception in any server framework and `createFetch()` for explicit route-scoped fetch:
 
 ```ts
 const proxy = ProxyClient(fetchWithPayment, {
-  mode: 'exclusive',
+  mode: 'only',
   routes: ['/api'],
   limit_usd: 1.25,
 });

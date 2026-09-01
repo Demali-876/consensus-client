@@ -12,6 +12,7 @@ import { makeSpin } from '../../../lib/spinners.ts';
 import { loadPrefs, loadBookmarks, saveBookmark, type Bookmark } from '../../../lib/store.ts';
 import { isFreeMode } from '../../../lib/server-config';
 import type { PreferNetwork } from '../../../../src/payment-fetch.js';
+import type { ProxyMode, LegacyProxyMode } from '../../../../src/types.js';
 import {
   buildTopBar, buildBreadcrumb, buildSubtitle,
   buildDetectedPanel, buildBookmarksPanel, buildWalletPanel,
@@ -31,7 +32,7 @@ export type ForwardSetupResult = {
   nodeDomain?:     string;
   nodeExclude?:    string;
   routes?:         string[];
-  mode?:           'inclusive' | 'exclusive';
+  mode?:           ProxyMode | LegacyProxyMode;
   matchSubroutes?: boolean;
   cacheTtl?:       number;
   verbose?:        boolean;
@@ -156,7 +157,7 @@ async function showForwardSetupInternal(): Promise<ForwardSetupOutcome> {
 
   const modeRow = new BoxRenderable(renderer, { flexDirection: 'row', gap: 2, alignItems: 'center', backgroundColor: C.dark });
   modeRow.add(new TextRenderable(renderer, { content: 'Mode'.padEnd(14), fg: C.dim, bg: C.dark, attributes: TextAttributes.BOLD }));
-  const modeToggle = makeToggle(renderer, 'inclusive', 'exclusive', 'a');
+  const modeToggle = makeToggle(renderer, 'except', 'only', 'a');
   modeRow.add(modeToggle.row);
   rightCol.add(modeRow);
 
@@ -215,7 +216,7 @@ async function showForwardSetupInternal(): Promise<ForwardSetupOutcome> {
     { id: 'nodeDomain',     value: '' },
     { id: 'nodeExclude',    value: prefs.defaultExcludeNode ?? '' },
     { id: 'routes',         value: '' },
-    { id: 'mode',           value: 'inclusive', options: ['inclusive', 'exclusive'] },
+    { id: 'mode',           value: 'except', options: ['except', 'only'] },
     { id: 'matchSubroutes', value: 'on', options: ['off', 'on'] },
     { id: 'cacheTtl',       value: String(prefs.defaultCacheTtl || 300) },
     { id: 'verbose',        value: prefs.defaultVerbose ? 'on' : 'off', options: ['off', 'on'] },
@@ -269,7 +270,7 @@ async function showForwardSetupInternal(): Promise<ForwardSetupOutcome> {
     }
 
     autoLaunchToggle.setActive(get('autoLaunch') === 'on' ? 'b' : 'a');
-    modeToggle.setActive      (get('mode')       === 'exclusive' ? 'b' : 'a');
+    modeToggle.setActive      (get('mode')       === 'only' ? 'b' : 'a');
     matchToggle.setActive     (get('matchSubroutes') === 'on' ? 'b' : 'a');
     verboseToggle.setActive   (get('verbose')    === 'on' ? 'b' : 'a');
     if (networkChips) networkChips.setSelected(get('family') as NetworkFamily);
@@ -358,8 +359,10 @@ async function showForwardSetupInternal(): Promise<ForwardSetupOutcome> {
     const ne = get('nodeExclude').trim();      if (ne) out.nodeExclude = ne;
     const rs = get('routes').split(',').map(s => s.trim()).filter(Boolean);
     if (rs.length) out.routes = rs;
-    if (get('mode') === 'exclusive') out.mode = 'exclusive';
-    else                              out.mode = 'inclusive';
+    // Only send a mode when routes are actually configured: ProxyClient rejects
+    // mode:'only' with an empty allowlist, and an empty denylist proxies
+    // everything either way, which is the no-routes default.
+    if (rs.length) out.mode = get('mode') === 'only' ? 'only' : 'except';
     if (get('matchSubroutes') === 'on') out.matchSubroutes = true;
     const ttl = parseInt(get('cacheTtl'), 10); if (!isNaN(ttl) && ttl >= 0) out.cacheTtl = ttl;
     if (get('verbose') === 'on') out.verbose = true;
