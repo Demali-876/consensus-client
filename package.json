@@ -1,7 +1,7 @@
 {
   "name": "@canister-software/consensus-cli",
   "version": "0.2.0-beta.0",
-  "description": "Consensus SDK for interacting with the Consensus protocol",
+  "description": "CLI and TypeScript SDK for HTTPS and TCP tunnels (an ngrok alternative), an HTTP proxy, static outbound IPs, and metered WebSockets, paid per use with x402",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -70,13 +70,38 @@
   },
   "keywords": [
     "consensus",
-    "api",
-    "deduplication",
     "x402",
+    "x402-client",
+    "proxy",
+    "http-proxy",
+    "forward-proxy",
+    "tunnel",
+    "https-tunnel",
+    "tcp-tunnel",
+    "localhost",
+    "ngrok-alternative",
+    "static-ip",
+    "outbound-ip",
+    "ip-whitelisting",
+    "websocket",
+    "deduplication",
+    "api",
     "payments",
-    "HTTPS",
-    "cli"
+    "micropayments",
+    "icp",
+    "solana",
+    "base",
+    "cli",
+    "sdk"
   ],
+  "homepage": "https://docs.consensus.canister.software",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Demali-876/consensus-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Demali-876/consensus-client/issues"
+  },
   "author": "Demali Gregg",
   "license": "MIT",
   "engines": {

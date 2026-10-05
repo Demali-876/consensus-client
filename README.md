@@ -17,6 +17,7 @@
 </p>
 
 <p align="center">
+  <strong><a href="https://docs.consensus.canister.software">Documentation</a></strong> · <a href="https://docs.consensus.canister.software/guides/tunnels/">HTTPS &amp; TCP tunnels</a> · <a href="https://docs.consensus.canister.software/guides/proxy/">HTTP proxy</a> · <a href="https://docs.consensus.canister.software/guides/static-ip/">Static IP</a> · <a href="https://docs.consensus.canister.software/guides/websockets/">WebSockets</a><br/>
   Part of the <a href="https://github.com/Demali-876/consensus">Consensus Protocol</a> · see also <a href="https://github.com/Demali-876/consensus-node">consensus-node</a>
 </p>
 
